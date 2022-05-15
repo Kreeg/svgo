@@ -7,6 +7,8 @@ const { chromium } = require('playwright');
 const { PNG } = require('pngjs');
 const pixelmatch = require('pixelmatch');
 const { optimize } = require('../lib/svgo.js');
+const {Resvg} = require('@resvg/resvg-js');
+
 
 const chunkInto = (array, chunksCount) => {
   // take upper bound to include tail
@@ -19,7 +21,7 @@ const chunkInto = (array, chunksCount) => {
   return result;
 };
 
-const runTests = async ({ list }) => {
+const runTests = async ({ list, originalFiles, optimizedFiles }) => {
   let skipped = 0;
   let mismatched = 0;
   let passed = 0;
@@ -57,21 +59,40 @@ const runTests = async ({ list }) => {
       skipped += 1;
       return;
     }
-    const width = 960;
-    const height = 720;
-    await page.goto(`http://localhost:5000/original/${name}`);
-    await page.setViewportSize({ width, height });
-    const originalBuffer = await page.screenshot({
-      omitBackground: true,
-      clip: { x: 0, y: 0, width, height },
-    });
-    await page.goto(`http://localhost:5000/optimized/${name}`);
-    const optimizedBuffer = await page.screenshot({
-      omitBackground: true,
-      clip: { x: 0, y: 0, width, height },
-    });
-    const originalPng = PNG.sync.read(originalBuffer);
-    const optimizedPng = PNG.sync.read(optimizedBuffer);
+
+    /**
+     *
+     * @param {string} svg SVG
+     *
+     */
+    const getPNGObjFromSVG = (svg) => {
+      const width = 960;
+      const height = 720;
+
+      const resvgObj = new Resvg(svg, {
+        // loadSystemFonts: false,
+        // fitTo: {mode: 'width', value: width},
+        crop: {
+          left: 0,
+          top: 0,
+          right: width,
+          bottom: height,
+        }
+      });
+
+      return {
+        buffer: resvgObj.render().asPng(),
+        width: resvgObj.width,
+        height: resvgObj.height
+      }
+    }
+
+    const originalObj = getPNGObjFromSVG(originalFiles.get(name))
+    const optimizedObj = getPNGObjFromSVG(optimizedFiles.get(name))
+    const originalPng = PNG.sync.read(originalObj.buffer);
+    const optimizedPng = PNG.sync.read(optimizedObj.buffer);
+    const width = originalObj.width;
+    const height = originalObj.height;
     const diff = new PNG({ width, height });
     const matched = pixelmatch(
       originalPng.data,
@@ -93,8 +114,22 @@ const runTests = async ({ list }) => {
           'regression-diffs',
           `${name}.diff.png`
         );
+        const file1 = path.join(
+          __dirname,
+          'regression-diffs',
+          `${name}-orig.diff.png`
+        );
+        const file2 = path.join(
+          __dirname,
+          'regression-diffs',
+          `${name}-opti.diff.png`
+        );
         await fs.promises.mkdir(path.dirname(file), { recursive: true });
         await fs.promises.writeFile(file, PNG.sync.write(diff));
+        await fs.promises.writeFile(file1, PNG.sync.write(originalPng));
+        await fs.promises.writeFile(file2, PNG.sync.write(optimizedPng));
+        await fs.promises.writeFile(`${file1}.svg`, originalFiles.get(name));
+        await fs.promises.writeFile(`${file2}.svg`, optimizedFiles.get(name));
       }
     }
   };
@@ -185,10 +220,7 @@ const readdirRecursive = async (absolute, relative = '') => {
       res.statusCode = 404;
       res.end();
     });
-    await new Promise((resolve) => {
-      server.listen(5000, resolve);
-    });
-    const passed = await runTests({ list });
+    const passed = await runTests({ list , originalFiles, optimizedFiles});
     server.close();
     // compute time
     const end = process.hrtime.bigint();
