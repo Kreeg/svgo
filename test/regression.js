@@ -63,11 +63,13 @@ const runTests = async ({ list }) => {
     await page.setViewportSize({ width, height });
     const originalBuffer = await page.screenshot({
       omitBackground: true,
+      type: 'png',
       clip: { x: 0, y: 0, width, height },
     });
     await page.goto(`http://localhost:5000/optimized/${name}`);
     const optimizedBuffer = await page.screenshot({
       omitBackground: true,
+      type: 'png',
       clip: { x: 0, y: 0, width, height },
     });
     const originalPng = PNG.sync.read(originalBuffer);
@@ -97,6 +99,28 @@ const runTests = async ({ list }) => {
         await fs.promises.writeFile(file, PNG.sync.write(diff));
       }
     }
+
+    const file = path.join(
+      __dirname,
+      'regression-diffs',
+      `${name}.diff.png`
+    );
+
+    const file1 = path.join(
+      __dirname,
+      'regression-diffs',
+      `${name}-orig.png`
+    );
+
+    const file2 = path.join(
+      __dirname,
+      'regression-diffs',
+      `${name}-opti.png`
+    );
+    await fs.promises.mkdir(path.dirname(file), { recursive: true });
+    await fs.promises.writeFile(file, PNG.sync.write(diff));
+    await fs.promises.writeFile(file1, originalBuffer);
+    await fs.promises.writeFile(file2, optimizedBuffer);
   };
   const browser = await chromium.launch();
   const context = await browser.newContext({ javaScriptEnabled: false });
@@ -152,8 +176,15 @@ const readdirRecursive = async (absolute, relative = '') => {
           console.error(`File: ${name}`);
           failed += 1;
         } else {
+          const dir = path.join(
+            __dirname,
+            'regression-svg',
+          );
           originalFiles.set(name, original);
           optimizedFiles.set(name, result.data);
+          await fs.promises.mkdir(path.dirname(path.join(dir, name)), { recursive: true });
+          await fs.promises.writeFile(path.join(dir, `${name}.orig.svg`), original);
+          await fs.promises.writeFile(path.join(dir, `${name}.opti.svg`), result.data);
         }
       } catch (error) {
         console.error(error);
